@@ -34,7 +34,7 @@ jobs:
           files: dist/*
           generate_release_notes: true
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
