@@ -86,8 +86,16 @@ func (a *Auth) agentKeys() map[string]string {
 	return merged
 }
 
-// parseKeysFile parses "agent:key" lines; blank lines and # comments allowed.
+// parseKeysFile parses per-agent keys from either a JSON object
+// ({"agent": "key", ...}) or "agent:key" lines (# comments allowed).
 func parseKeysFile(s string) map[string]string {
+	if t := strings.TrimSpace(s); strings.HasPrefix(t, "{") {
+		out := map[string]string{}
+		if err := json.Unmarshal([]byte(t), &out); err == nil {
+			return out
+		}
+		// fall through to line parsing on malformed JSON
+	}
 	out := map[string]string{}
 	for _, line := range strings.Split(s, "\n") {
 		line = strings.TrimSpace(line)
