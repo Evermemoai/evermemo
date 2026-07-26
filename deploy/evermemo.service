@@ -1,0 +1,39 @@
+# Example systemd unit for an evermemo memory hub.
+#
+# Install:
+#   sudo cp evermemo /usr/local/bin/
+#   sudo useradd --system --home /var/lib/evermemo --create-home evermemo
+#   sudo cp deploy/evermemo.service /etc/systemd/system/
+#   sudo systemctl enable --now evermemo
+#
+# Keys: put agent keys in /var/lib/evermemo/keys.json ({"agent":"key", ...});
+# they hot-reload on change — no restart needed to rotate.
+
+[Unit]
+Description=evermemo memory hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=evermemo
+Group=evermemo
+Environment=EVERMEMO_DB=/var/lib/evermemo/evermemo.db
+Environment=EVERMEMO_KEYS_FILE=/var/lib/evermemo/keys.json
+Environment=EVERMEMO_RATE=120
+ExecStart=/usr/local/bin/evermemo serve --addr 127.0.0.1:7777
+Restart=on-failure
+RestartSec=2
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/evermemo
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

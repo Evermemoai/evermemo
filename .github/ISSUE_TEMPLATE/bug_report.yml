@@ -1,0 +1,38 @@
+name: Bug report
+description: Something isn't working
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: evermemo version
+      description: Output of `evermemo version`
+      placeholder: v0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options: [CLI, TUI, HTTP API, MCP (stdio), MCP (HTTP), Proxy, Hub mode]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. evermemo serve ...
+        2. curl ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs/output
+      render: shell

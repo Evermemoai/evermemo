@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 // Chatter is the LLM capability consolidation needs (satisfied by *llm.Client).

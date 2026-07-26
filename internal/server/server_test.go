@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 func testServer(t *testing.T, cfg Config) (*httptest.Server, *store.Store) {

@@ -1,0 +1,7 @@
+.git
+.github
+dist
+*.md
+evermemo
+LICENSE
+deploy

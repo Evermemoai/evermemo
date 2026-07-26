@@ -1,0 +1,17 @@
+# Example: evermemo hub with Docker Compose.
+# Put agent keys in ./keys.json ({"claude": "key1", "cursor": "key2"}).
+services:
+  evermemo:
+    image: ghcr.io/evermemoai/evermemo:latest
+    restart: unless-stopped
+    ports:
+      - "7777:7777"
+    volumes:
+      - evermemo-data:/data
+      - ./keys.json:/data/keys.json:ro
+    environment:
+      EVERMEMO_KEYS_FILE: /data/keys.json
+      EVERMEMO_RATE: "120"
+
+volumes:
+  evermemo-data:

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 func TestParseACL(t *testing.T) {

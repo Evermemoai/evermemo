@@ -19,8 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"evermemo/internal/mcp"
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/mcp"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 type ctxKey int

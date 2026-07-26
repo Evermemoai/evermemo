@@ -10,18 +10,21 @@ import (
 	"strconv"
 	"strings"
 
-	"evermemo/internal/client"
-	"evermemo/internal/consolidate"
-	"evermemo/internal/embed"
-	"evermemo/internal/llm"
-	"evermemo/internal/mcp"
-	"evermemo/internal/proxy"
-	"evermemo/internal/server"
-	"evermemo/internal/store"
-	"evermemo/internal/tui"
+	"github.com/Evermemoai/evermemo/internal/client"
+	"github.com/Evermemoai/evermemo/internal/consolidate"
+	"github.com/Evermemoai/evermemo/internal/embed"
+	"github.com/Evermemoai/evermemo/internal/llm"
+	"github.com/Evermemoai/evermemo/internal/mcp"
+	"github.com/Evermemoai/evermemo/internal/proxy"
+	"github.com/Evermemoai/evermemo/internal/server"
+	"github.com/Evermemoai/evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/tui"
 )
 
-const version = "0.1.0"
+// version is set at build time via:
+//
+//	go build -ldflags "-X main.version=v1.2.3"
+var version = "dev"
 
 const usage = `evermemo — a tiny, universal memory engine for humans and AI agents
 

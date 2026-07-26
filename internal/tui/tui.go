@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 // ANSI styles (truecolor-free, 256-color safe).

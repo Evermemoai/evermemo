@@ -1,4 +1,4 @@
-module evermemo
+module github.com/Evermemoai/evermemo
 
 go 1.25.4
 

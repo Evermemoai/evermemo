@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 // fakeLLM returns a canned action script.

@@ -1,8 +1,14 @@
 # evermemo
 
+[![CI](https://github.com/Evermemoai/evermemo/actions/workflows/ci.yml/badge.svg)](https://github.com/Evermemoai/evermemo/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Evermemoai/evermemo)](https://github.com/Evermemoai/evermemo/releases)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Evermemoai/evermemo.svg)](https://pkg.go.dev/github.com/Evermemoai/evermemo)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Evermemoai/evermemo)](https://goreportcard.com/report/github.com/Evermemoai/evermemo)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **A tiny, universal memory engine for humans and AI agents.**
 
-One small Go binary. No external services. It's a CLI, an HTTP API, and an MCP server — so *anything* can remember things: your terminal, your scripts, Claude Code, Cursor, or any agent in any industry.
+One small Go binary. No external services. It's a CLI, an HTTP API, and an MCP server — so *anything* can remember things: your terminal, your scripts, Claude Code, Cursor, or any agent in any industry. Run one as a hub and every agent in your organization shares, synchronizes, and reasons over the same trusted knowledge.
 
 ```
 ┌──────────────┐   ┌─────────────┐   ┌──────────────────┐
@@ -12,16 +18,36 @@ One small Go binary. No external services. It's a CLI, an HTTP API, and an MCP s
        └──────────────────┼──────────────────┘
                   ┌───────▼──────┐
                   │   evermemo   │  single binary
-                  │ SQLite+FTS5  │  BM25 full-text search
+                  │ SQLite+FTS5  │  BM25 + semantic search
                   └──────────────┘
 ```
 
 ## Install
 
+**Prebuilt binaries** (macOS, Linux, Windows — amd64/arm64):
+grab one from [Releases](https://github.com/Evermemoai/evermemo/releases).
+
+**Go:**
+
 ```sh
-go build -o evermemo .
-# optionally: mv evermemo /usr/local/bin/
+go install github.com/Evermemoai/evermemo@latest
 ```
+
+**Docker:**
+
+```sh
+docker run -v evermemo-data:/data -p 7777:7777 ghcr.io/evermemoai/evermemo:latest
+```
+
+**From source:**
+
+```sh
+git clone https://github.com/Evermemoai/evermemo.git && cd evermemo
+go build -o evermemo .
+```
+
+For production hubs, see [deploy/](deploy/) for systemd and Docker Compose
+examples, and [SECURITY.md](SECURITY.md) for the hardening checklist.
 
 ## CLI
 
@@ -245,8 +271,15 @@ Every command also accepts `--db` to point at a specific database, and `--ns`/`n
 - [x] Memory expiry / TTL
 - [x] Import/export (JSONL)
 - [x] Streamable HTTP MCP transport
-- [ ] Next.js dashboard (if people ask for it)
+- [ ] Web dashboard (browse, search, audit, graphs)
+- [ ] Webhooks / change subscriptions (reactive memory)
+- [ ] Local-first replicas with hub sync
+
+## Contributing
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Found a security issue? Please follow [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)

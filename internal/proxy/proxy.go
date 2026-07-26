@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 // Searcher is the memory capability the proxy needs (satisfied by

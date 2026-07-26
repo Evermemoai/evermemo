@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/store"
 )
 
 // Client talks to a remote evermemo HTTP API.
