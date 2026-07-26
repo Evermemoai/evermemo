@@ -146,3 +146,36 @@ func (c *Client) List(namespace string, limit int) ([]*store.Memory, error) {
 func (c *Client) Delete(id string) error {
 	return c.do("DELETE", "/v1/memories/"+url.PathEscape(id), nil, nil)
 }
+
+// Get fetches one memory (with links) from the hub.
+func (c *Client) Get(id string) (*store.Memory, error) {
+	var m store.Memory
+	if err := c.do("GET", "/v1/memories/"+url.PathEscape(id), nil, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// Link relates two memories on the hub.
+func (c *Client) Link(from, rel, to string) error {
+	return c.do("POST", "/v1/memories/"+url.PathEscape(from)+"/links", map[string]string{
+		"rel": rel, "to": to,
+	}, nil)
+}
+
+// Verify votes on a memory's accuracy. The hub derives the voting agent from
+// the client's credentials, so the agent parameter is unused here.
+func (c *Client) Verify(id, _ string, vote int, note string) (*store.Memory, error) {
+	v := "confirm"
+	if vote < 0 {
+		v = "dispute"
+	}
+	var m store.Memory
+	err := c.do("POST", "/v1/memories/"+url.PathEscape(id)+"/verify", map[string]string{
+		"vote": v, "note": note,
+	}, &m)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}

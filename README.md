@@ -70,8 +70,9 @@ Set `EVERMEMO_API_KEY=secret` to require `Authorization: Bearer secret` on all `
 
 ## MCP (Claude Code, Cursor, any agent)
 
-evermemo speaks the Model Context Protocol over stdio, exposing five tools:
-`add_memory`, `update_memory`, `search_memory`, `list_memories`, `delete_memory`.
+evermemo speaks the Model Context Protocol over stdio, exposing eight tools:
+`add_memory`, `update_memory`, `search_memory`, `list_memories`, `get_memory`,
+`link_memory`, `verify_memory`, `delete_memory`.
 
 **Claude Code:**
 
@@ -135,6 +136,58 @@ export EVERMEMO_EMBED_API_KEY=sk-…
 Memories are embedded on write; if the provider is down, search silently
 falls back to keyword-only.
 
+## Trusted knowledge: provenance, confidence, graphs, ACLs
+
+Every memory records **who wrote it**. On top of that:
+
+- **Verification** — agents confirm or dispute each other's memories
+  (`verify_memory` tool, `POST /v1/memories/{id}/verify`). Votes move a
+  confidence score (starts 0.6; +0.10 per confirm, −0.15 per dispute).
+- **Memory graphs** — link memories with `supersedes`, `relates_to`, or
+  `derived_from` (`link_memory` tool, `evermemo link <from> <rel> <to>`)
+  to trace how knowledge evolved. Links come back on `GET /v1/memories/{id}`.
+- **Namespace ACLs** — restrict which agents can read/write which namespaces:
+
+```sh
+EVERMEMO_ACL='finbot:finance:rw,hrbot:hr:rw,hrbot:finance:r,auditor:*:r' \
+EVERMEMO_AGENT_KEYS='finbot:key1,hrbot:key2,auditor:key3' \
+evermemo serve
+```
+
+Enforced on both the REST API and the `/mcp` transport. No ACL set = open.
+
+## Memory consolidation (LLM-powered hygiene)
+
+Over time memories accumulate duplicates and contradictions. Point evermemo
+at a chat LLM and let it clean up:
+
+```sh
+export EVERMEMO_LLM_URL=http://localhost:11434   # Ollama; or any OpenAI-compatible API
+evermemo consolidate --ns default --dry-run      # see the plan
+evermemo consolidate --ns default                # apply it
+```
+
+The LLM merges duplicates, resolves contradictions (newest wins), and
+archives stale memories. Nothing is deleted: sources are archived (hidden
+from search, kept for audit) and linked to their replacement with
+`derived_from`/`supersedes`.
+
+## Auto-recall proxy (memory without tools)
+
+Put evermemo between your app and the LLM API, and relevant memories are
+injected into every chat request automatically — no `search_memory` calls
+needed:
+
+```sh
+evermemo proxy --target https://api.openai.com --addr :8788
+# then point your SDK at http://localhost:8788 instead of api.openai.com
+```
+
+Works with OpenAI-style (`/v1/chat/completions`) and Anthropic-style
+(`/v1/messages`) APIs, streams SSE responses through, and passes all other
+routes untouched. Use `--remote https://your-hub:7777` to recall from the
+shared hub.
+
 ## Configuration
 
 | Env var            | Default                  | Description                      |
@@ -149,6 +202,10 @@ falls back to keyword-only.
 | `EVERMEMO_EMBED_MODEL` | provider default     | Embedding model name             |
 | `EVERMEMO_EMBED_API_KEY` | *(unset)*          | Key for OpenAI-compatible providers |
 | `EVERMEMO_EMBED_PROVIDER` | `ollama`          | `ollama` or `openai`             |
+| `EVERMEMO_LLM_URL` | *(unset)*                | Chat LLM for `consolidate`       |
+| `EVERMEMO_LLM_MODEL` | provider default       | Chat model name                  |
+| `EVERMEMO_LLM_API_KEY` | *(unset)*            | Key for OpenAI-compatible chat providers |
+| `EVERMEMO_ACL`     | *(unset)*                | Namespace ACLs: `agent:ns:perm` (r/rw, `*` wildcards) |
 
 Every command also accepts `--db` to point at a specific database, and `--ns`/`namespace` to partition memories (per project, per user, per agent — your call).
 

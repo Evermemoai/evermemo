@@ -21,9 +21,12 @@ const protocolVersion = "2024-11-05"
 type Backend interface {
 	Add(req store.AddRequest) (*store.Memory, error)
 	Update(id, content string, tags []string) (*store.Memory, error)
+	Get(id string) (*store.Memory, error)
 	Search(query, namespace string, limit int) ([]*store.Memory, error)
 	List(namespace string, limit int) ([]*store.Memory, error)
 	Delete(id string) error
+	Link(from, rel, to string) error
+	Verify(id, agent string, vote int, note string) (*store.Memory, error)
 }
 
 type request struct {
@@ -178,6 +181,31 @@ func toolDefs() []map[string]any {
 				"id": str("The memory id, e.g. 'mem_a1b2c3d4e5f60718'"),
 			}, "id"),
 		},
+		{
+			"name":        "get_memory",
+			"description": "Fetch a memory by id, including its links to related memories and its confidence score.",
+			"inputSchema": obj(map[string]any{
+				"id": str("The memory id"),
+			}, "id"),
+		},
+		{
+			"name":        "link_memory",
+			"description": "Link two memories to trace how knowledge evolved. Relations: 'supersedes' (from replaces to), 'relates_to', 'derived_from'.",
+			"inputSchema": obj(map[string]any{
+				"from": str("Source memory id"),
+				"rel":  str("Relation: supersedes, relates_to, or derived_from"),
+				"to":   str("Target memory id"),
+			}, "from", "rel", "to"),
+		},
+		{
+			"name":        "verify_memory",
+			"description": "Confirm or dispute a memory's accuracy. Votes adjust the memory's confidence score, building trust across agents.",
+			"inputSchema": obj(map[string]any{
+				"id":   str("The memory id"),
+				"vote": str("'confirm' or 'dispute'"),
+				"note": str("Optional reason for the vote"),
+			}, "id", "vote"),
+		},
 	}
 }
 
@@ -250,6 +278,35 @@ func callTool(st Backend, agent string, params json.RawMessage) (any, error) {
 		err = st.Delete(getStr("id"))
 		if err == nil {
 			text = fmt.Sprintf("Deleted memory %s", getStr("id"))
+		}
+	case "get_memory":
+		var mem *store.Memory
+		mem, err = st.Get(getStr("id"))
+		if err == nil {
+			b, _ := json.MarshalIndent(mem, "", "  ")
+			text = string(b)
+		}
+	case "link_memory":
+		err = st.Link(getStr("from"), getStr("rel"), getStr("to"))
+		if err == nil {
+			text = fmt.Sprintf("Linked %s -%s-> %s", getStr("from"), getStr("rel"), getStr("to"))
+		}
+	case "verify_memory":
+		vote := 0
+		switch getStr("vote") {
+		case "confirm":
+			vote = 1
+		case "dispute":
+			vote = -1
+		}
+		if vote == 0 {
+			err = fmt.Errorf("vote must be 'confirm' or 'dispute'")
+			break
+		}
+		var mem *store.Memory
+		mem, err = st.Verify(getStr("id"), agent, vote, getStr("note"))
+		if err == nil {
+			text = fmt.Sprintf("Recorded %s on %s — confidence now %.2f", getStr("vote"), mem.ID, mem.Confidence)
 		}
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", p.Name)

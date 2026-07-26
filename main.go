@@ -5,13 +5,17 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
 	"evermemo/internal/client"
+	"evermemo/internal/consolidate"
 	"evermemo/internal/embed"
+	"evermemo/internal/llm"
 	"evermemo/internal/mcp"
+	"evermemo/internal/proxy"
 	"evermemo/internal/server"
 	"evermemo/internal/store"
 	"evermemo/internal/tui"
@@ -34,8 +38,12 @@ Commands:
   get       Get a memory by id
   update    Update a memory's content/tags by id
   delete    Delete a memory by id
+  link      Link two memories: evermemo link <from> <rel> <to>
+  verify    Vote on a memory: evermemo verify <id> confirm|dispute
   export    Write all memories as JSONL to stdout
   import    Read JSONL memories from stdin
+  consolidate  LLM-powered memory hygiene: merge duplicates, resolve contradictions
+  proxy     Auto-recall proxy in front of an LLM API (injects relevant memories)
   mcp       Run as an MCP server over stdio (for Claude Code, Cursor, etc.)
   ui        Start the interactive terminal UI (default when no command given)
   version   Print version
@@ -52,6 +60,11 @@ Environment:
   EVERMEMO_EMBED_MODEL     Embedding model (default: nomic-embed-text / text-embedding-3-small)
   EVERMEMO_EMBED_API_KEY   Bearer key for OpenAI-compatible embedding providers
   EVERMEMO_EMBED_PROVIDER  "ollama" (default) or "openai"
+  EVERMEMO_LLM_URL         Chat LLM for 'consolidate' (Ollama or OpenAI-compatible)
+  EVERMEMO_LLM_MODEL       Chat model (default: llama3.2 / gpt-4o-mini)
+  EVERMEMO_LLM_API_KEY     Bearer key for OpenAI-compatible chat providers
+  EVERMEMO_ACL             Namespace ACLs "agent:ns:perm" (perm r|rw, * wildcards),
+                           e.g. "claude:eng:rw,cursor:eng:r,auditor:*:r"
 
 Examples:
   evermemo add "User prefers dark mode and tabs over spaces"
@@ -59,6 +72,8 @@ Examples:
   evermemo search "deploy time"
   evermemo serve --addr :7777
   evermemo export > memories.jsonl
+  evermemo consolidate --ns default --dry-run
+  evermemo proxy --target https://api.openai.com --addr :8788
   evermemo mcp --remote https://memory.internal:7777 --agent claude-code
 `
 
@@ -90,10 +105,18 @@ func main() {
 		err = cmdUpdate(args)
 	case "delete", "rm":
 		err = cmdDelete(args)
+	case "link":
+		err = cmdLink(args)
+	case "verify":
+		err = cmdVerify(args)
 	case "export":
 		err = cmdExport(args)
 	case "import":
 		err = cmdImport(args)
+	case "consolidate":
+		err = cmdConsolidate(args)
+	case "proxy":
+		err = cmdProxy(args)
 	case "mcp":
 		err = cmdMCP(args)
 	case "ui", "tui":
@@ -145,6 +168,7 @@ func cmdServe(args []string) error {
 			SharedKey: os.Getenv("EVERMEMO_API_KEY"),
 			AgentKeys: server.ParseAgentKeys(os.Getenv("EVERMEMO_AGENT_KEYS")),
 		},
+		ACL:        server.ParseACL(os.Getenv("EVERMEMO_ACL")),
 		RatePerMin: rate,
 		Version:    version,
 	})
@@ -238,6 +262,124 @@ func cmdUpdate(args []string) error {
 	}
 	fmt.Println("updated", mem.ID)
 	return nil
+}
+
+func cmdLink(args []string) error {
+	fs := flag.NewFlagSet("link", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	fs.Parse(args)
+	if fs.NArg() != 3 {
+		return fmt.Errorf("usage: evermemo link <from-id> <supersedes|relates_to|derived_from> <to-id>")
+	}
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if err := st.Link(fs.Arg(0), fs.Arg(1), fs.Arg(2)); err != nil {
+		return err
+	}
+	fmt.Printf("linked %s -%s-> %s\n", fs.Arg(0), fs.Arg(1), fs.Arg(2))
+	return nil
+}
+
+func cmdVerify(args []string) error {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	note := fs.String("note", "", "reason for the vote")
+	fs.Parse(args)
+	if fs.NArg() != 2 {
+		return fmt.Errorf("usage: evermemo verify <id> confirm|dispute")
+	}
+	vote := 0
+	switch fs.Arg(1) {
+	case "confirm":
+		vote = 1
+	case "dispute":
+		vote = -1
+	default:
+		return fmt.Errorf("vote must be 'confirm' or 'dispute'")
+	}
+	agent := os.Getenv("EVERMEMO_AGENT")
+	if agent == "" {
+		agent = "cli"
+	}
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	mem, err := st.Verify(fs.Arg(0), agent, vote, *note)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("recorded %s — confidence now %.2f\n", fs.Arg(1), mem.Confidence)
+	return nil
+}
+
+func cmdConsolidate(args []string) error {
+	fs := flag.NewFlagSet("consolidate", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	ns := fs.String("ns", "", "namespace to consolidate ('' = all)")
+	dryRun := fs.Bool("dry-run", false, "show what would happen without changing anything")
+	fs.Parse(args)
+
+	ai := llm.FromEnv()
+	if ai == nil {
+		return fmt.Errorf("consolidation needs an LLM: set EVERMEMO_LLM_URL (e.g. http://localhost:11434 for Ollama)")
+	}
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	rep, err := consolidate.Run(st, ai, *ns, *dryRun)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(rep)
+}
+
+func cmdProxy(args []string) error {
+	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	addr := fs.String("addr", ":8788", "address to listen on")
+	target := fs.String("target", "", "upstream LLM API base URL, e.g. https://api.openai.com")
+	ns := fs.String("ns", "", "memory namespace to search ('' = all)")
+	limit := fs.Int("limit", 5, "max memories to inject per request")
+	remote := fs.String("remote", os.Getenv("EVERMEMO_REMOTE"), "search a central memory hub instead of a local db")
+	key := fs.String("key", os.Getenv("EVERMEMO_API_KEY"), "API key for the remote hub")
+	fs.Parse(args)
+	if *target == "" {
+		return fmt.Errorf("usage: evermemo proxy --target <llm-api-url> [--addr :8788]")
+	}
+
+	var mem proxy.Searcher
+	if *remote != "" {
+		mem = client.New(*remote, *key, os.Getenv("EVERMEMO_AGENT"))
+	} else {
+		st, err := openStore(*db)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		mem = st
+	}
+
+	h, err := proxy.Handler(mem, proxy.Config{Target: *target, Namespace: *ns, Limit: *limit})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("evermemo %s auto-recall proxy on %s → %s\n", version, *addr, *target)
+	return http.ListenAndServe(*addr, h)
 }
 
 func cmdExport(args []string) error {

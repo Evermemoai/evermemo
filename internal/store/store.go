@@ -25,17 +25,30 @@ import (
 
 // Memory is a single stored memory.
 type Memory struct {
-	ID        string         `json:"id"`
-	Content   string         `json:"content"`
-	Tags      []string       `json:"tags,omitempty"`
-	Namespace string         `json:"namespace"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	Agent     string         `json:"agent,omitempty"` // who wrote it (provenance)
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	ExpiresAt *time.Time     `json:"expires_at,omitempty"` // nil = never expires
-	Score     float64        `json:"score,omitempty"`      // relevance, only set on search results
+	ID         string         `json:"id"`
+	Content    string         `json:"content"`
+	Tags       []string       `json:"tags,omitempty"`
+	Namespace  string         `json:"namespace"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	Agent      string         `json:"agent,omitempty"` // who wrote it (provenance)
+	Confidence float64        `json:"confidence"`      // trust score in [0.05, 0.99]
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	ExpiresAt  *time.Time     `json:"expires_at,omitempty"` // nil = never expires
+	Score      float64        `json:"score,omitempty"`      // relevance, only set on search results
+	Links      []Link         `json:"links,omitempty"`      // populated by Get
 }
+
+// Link relates two memories. Relations: "supersedes", "relates_to",
+// "derived_from".
+type Link struct {
+	From string `json:"from"`
+	Rel  string `json:"rel"`
+	To   string `json:"to"`
+}
+
+// ValidRels are the allowed link relations.
+var ValidRels = map[string]bool{"supersedes": true, "relates_to": true, "derived_from": true}
 
 // AddRequest describes a memory to store.
 type AddRequest struct {
@@ -83,6 +96,8 @@ CREATE TABLE IF NOT EXISTS memories (
 	metadata   TEXT NOT NULL DEFAULT '{}',
 	agent      TEXT NOT NULL DEFAULT '',
 	expires_at INTEGER NOT NULL DEFAULT 0,
+	archived   INTEGER NOT NULL DEFAULT 0,
+	confidence REAL NOT NULL DEFAULT 0.6,
 	created_at TEXT NOT NULL,
 	updated_at TEXT NOT NULL
 );
@@ -92,6 +107,25 @@ CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace);
 CREATE TABLE IF NOT EXISTS embeddings (
 	id     TEXT PRIMARY KEY,
 	vector BLOB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS links (
+	from_id    TEXT NOT NULL,
+	rel        TEXT NOT NULL,
+	to_id      TEXT NOT NULL,
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (from_id, rel, to_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_id);
+
+CREATE TABLE IF NOT EXISTS verifications (
+	memory_id  TEXT NOT NULL,
+	agent      TEXT NOT NULL,
+	vote       INTEGER NOT NULL, -- +1 confirm, -1 dispute
+	note       TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	PRIMARY KEY (memory_id, agent)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
@@ -138,6 +172,8 @@ func Open(path string) (*Store, error) {
 	// Migrations for older databases; harmless if the columns exist.
 	db.Exec(`ALTER TABLE memories ADD COLUMN agent TEXT NOT NULL DEFAULT ''`)
 	db.Exec(`ALTER TABLE memories ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE memories ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`)
+	db.Exec(`ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.6`)
 	// Purge expired memories on open.
 	db.Exec(`DELETE FROM memories WHERE expires_at > 0 AND expires_at <= ?`, time.Now().Unix())
 	return &Store{db: db, path: path}, nil
@@ -203,10 +239,11 @@ func (s *Store) Add(req AddRequest) (*Memory, error) {
 		expires = t.Unix()
 		m.ExpiresAt = &t
 	}
+	m.Confidence = 0.6
 	_, err := s.db.Exec(
-		`INSERT INTO memories (id, content, tags, namespace, metadata, agent, expires_at, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.Content, strings.Join(req.Tags, ","), m.Namespace, metaJSON, m.Agent, expires,
+		`INSERT INTO memories (id, content, tags, namespace, metadata, agent, expires_at, confidence, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.Content, strings.Join(req.Tags, ","), m.Namespace, metaJSON, m.Agent, expires, m.Confidence,
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -241,16 +278,110 @@ func (s *Store) Update(id, content string, tags []string) (*Memory, error) {
 	return m, nil
 }
 
-// Get returns a memory by id.
+// Get returns a memory by id, including its links (both directions).
 func (s *Store) Get(id string) (*Memory, error) {
 	row := s.db.QueryRow(
-		`SELECT id, content, tags, namespace, metadata, agent, expires_at, created_at, updated_at
+		`SELECT id, content, tags, namespace, metadata, agent, expires_at, confidence, created_at, updated_at
 		 FROM memories WHERE id = ?`, id)
 	m, err := scanMemory(row)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("memory %q not found", id)
 	}
+	if err != nil {
+		return nil, err
+	}
+	m.Links, err = s.LinksFor(id)
 	return m, err
+}
+
+// Link records a relation between two memories. Valid rels: supersedes,
+// relates_to, derived_from.
+func (s *Store) Link(from, rel, to string) error {
+	if !ValidRels[rel] {
+		return fmt.Errorf("invalid relation %q (want supersedes, relates_to, or derived_from)", rel)
+	}
+	for _, id := range []string{from, to} {
+		var one int
+		if err := s.db.QueryRow(`SELECT 1 FROM memories WHERE id = ?`, id).Scan(&one); err != nil {
+			return fmt.Errorf("memory %q not found", id)
+		}
+	}
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO links (from_id, rel, to_id, created_at) VALUES (?, ?, ?, ?)`,
+		from, rel, to, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// LinksFor returns all links where id is either endpoint.
+func (s *Store) LinksFor(id string) ([]Link, error) {
+	rows, err := s.db.Query(
+		`SELECT from_id, rel, to_id FROM links WHERE from_id = ? OR to_id = ?`, id, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Link
+	for rows.Next() {
+		var l Link
+		if err := rows.Scan(&l.From, &l.Rel, &l.To); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// Verify records an agent's confirm (+1) or dispute (-1) vote on a memory
+// and recomputes its confidence: 0.6 + 0.10·confirms − 0.15·disputes,
+// clamped to [0.05, 0.99]. One vote per agent (latest wins).
+func (s *Store) Verify(id, agent string, vote int, note string) (*Memory, error) {
+	if agent == "" {
+		return nil, fmt.Errorf("verification requires an agent identity")
+	}
+	if vote != 1 && vote != -1 {
+		return nil, fmt.Errorf("vote must be +1 (confirm) or -1 (dispute)")
+	}
+	if _, err := s.Get(id); err != nil {
+		return nil, err
+	}
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO verifications (memory_id, agent, vote, note, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		id, agent, vote, note, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	var confirms, disputes int
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(SUM(vote = 1), 0), COALESCE(SUM(vote = -1), 0)
+		 FROM verifications WHERE memory_id = ?`, id).Scan(&confirms, &disputes); err != nil {
+		return nil, err
+	}
+	conf := 0.6 + 0.10*float64(confirms) - 0.15*float64(disputes)
+	conf = math.Round(conf*100) / 100
+	if conf > 0.99 {
+		conf = 0.99
+	}
+	if conf < 0.05 {
+		conf = 0.05
+	}
+	if _, err := s.db.Exec(`UPDATE memories SET confidence = ? WHERE id = ?`, conf, id); err != nil {
+		return nil, err
+	}
+	return s.Get(id)
+}
+
+// Archive hides a memory from list/search without deleting it (audit trail
+// for consolidation). Get still returns archived memories.
+func (s *Store) Archive(id string) error {
+	res, err := s.db.Exec(`UPDATE memories SET archived = 1 WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("memory %q not found", id)
+	}
+	return nil
 }
 
 // Delete removes a memory by id.
@@ -272,10 +403,11 @@ func (s *Store) List(namespace string, limit int) ([]*Memory, error) {
 		limit = 20
 	}
 	rows, err := s.db.Query(
-		`SELECT id, content, tags, namespace, metadata, agent, expires_at, created_at, updated_at
+		`SELECT id, content, tags, namespace, metadata, agent, expires_at, confidence, created_at, updated_at
 		 FROM memories
 		 WHERE (? = '' OR namespace = ?)
 		   AND (expires_at = 0 OR expires_at > ?)
+		   AND archived = 0
 		 ORDER BY created_at DESC
 		 LIMIT ?`, namespace, namespace, time.Now().Unix(), limit)
 	if err != nil {
@@ -320,13 +452,14 @@ func (s *Store) keywordSearch(query, namespace string, limit int) ([]*Memory, er
 		return nil, fmt.Errorf("empty search query")
 	}
 	rows, err := s.db.Query(
-		`SELECT m.id, m.content, m.tags, m.namespace, m.metadata, m.agent, m.expires_at, m.created_at, m.updated_at,
+		`SELECT m.id, m.content, m.tags, m.namespace, m.metadata, m.agent, m.expires_at, m.confidence, m.created_at, m.updated_at,
 		        -bm25(memories_fts) AS score
 		 FROM memories_fts f
 		 JOIN memories m ON m.rowid = f.rowid
 		 WHERE memories_fts MATCH ?
 		   AND (? = '' OR m.namespace = ?)
 		   AND (m.expires_at = 0 OR m.expires_at > ?)
+		   AND m.archived = 0
 		 ORDER BY bm25(memories_fts)
 		 LIMIT ?`, match, namespace, namespace, time.Now().Unix(), limit)
 	if err != nil {
@@ -366,7 +499,7 @@ func scanMemoryScore(row scannable, withScore bool) (*Memory, error) {
 	var m Memory
 	var tags, metaJSON, createdAt, updatedAt string
 	var expires int64
-	dest := []any{&m.ID, &m.Content, &tags, &m.Namespace, &metaJSON, &m.Agent, &expires, &createdAt, &updatedAt}
+	dest := []any{&m.ID, &m.Content, &tags, &m.Namespace, &metaJSON, &m.Agent, &expires, &m.Confidence, &createdAt, &updatedAt}
 	if withScore {
 		dest = append(dest, &m.Score)
 	}
@@ -418,12 +551,13 @@ func (s *Store) semanticSearch(query, namespace string, limit int) ([]*Memory, e
 		return nil, fmt.Errorf("embedding query: %w", err)
 	}
 	rows, err := s.db.Query(
-		`SELECT m.id, m.content, m.tags, m.namespace, m.metadata, m.agent, m.expires_at, m.created_at, m.updated_at,
+		`SELECT m.id, m.content, m.tags, m.namespace, m.metadata, m.agent, m.expires_at, m.confidence, m.created_at, m.updated_at,
 		        e.vector
 		 FROM embeddings e
 		 JOIN memories m ON m.id = e.id
 		 WHERE (? = '' OR m.namespace = ?)
-		   AND (m.expires_at = 0 OR m.expires_at > ?)`,
+		   AND (m.expires_at = 0 OR m.expires_at > ?)
+		   AND m.archived = 0`,
 		namespace, namespace, time.Now().Unix())
 	if err != nil {
 		return nil, err
@@ -436,7 +570,7 @@ func (s *Store) semanticSearch(query, namespace string, limit int) ([]*Memory, e
 		var tags, metaJSON, createdAt, updatedAt string
 		var expires int64
 		var blob []byte
-		if err := rows.Scan(&m.ID, &m.Content, &tags, &m.Namespace, &metaJSON, &m.Agent, &expires, &createdAt, &updatedAt, &blob); err != nil {
+		if err := rows.Scan(&m.ID, &m.Content, &tags, &m.Namespace, &metaJSON, &m.Agent, &expires, &m.Confidence, &createdAt, &updatedAt, &blob); err != nil {
 			return nil, err
 		}
 		if tags != "" {
@@ -580,10 +714,13 @@ func (s *Store) ImportJSONL(r io.Reader) (int, error) {
 		if m.ExpiresAt != nil {
 			expires = m.ExpiresAt.Unix()
 		}
+		if m.Confidence == 0 {
+			m.Confidence = 0.6
+		}
 		_, err := s.db.Exec(
-			`INSERT OR REPLACE INTO memories (id, content, tags, namespace, metadata, agent, expires_at, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			m.ID, m.Content, strings.Join(m.Tags, ","), m.Namespace, metaJSON, m.Agent, expires,
+			`INSERT OR REPLACE INTO memories (id, content, tags, namespace, metadata, agent, expires_at, confidence, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			m.ID, m.Content, strings.Join(m.Tags, ","), m.Namespace, metaJSON, m.Agent, expires, m.Confidence,
 			m.CreatedAt.Format(time.RFC3339Nano), m.UpdatedAt.Format(time.RFC3339Nano),
 		)
 		if err != nil {
