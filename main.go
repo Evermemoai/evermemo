@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"evermemo/internal/client"
+	"evermemo/internal/embed"
 	"evermemo/internal/mcp"
 	"evermemo/internal/server"
 	"evermemo/internal/store"
@@ -27,26 +29,36 @@ Running with no command starts the interactive UI.
 Commands:
   serve     Start the HTTP API server
   add       Add a memory (from arg or stdin)
-  search    Full-text search memories
+  search    Full-text (and semantic, if configured) search
   list      List recent memories
   get       Get a memory by id
+  update    Update a memory's content/tags by id
   delete    Delete a memory by id
+  export    Write all memories as JSONL to stdout
+  import    Read JSONL memories from stdin
   mcp       Run as an MCP server over stdio (for Claude Code, Cursor, etc.)
   ui        Start the interactive terminal UI (default when no command given)
   version   Print version
 
 Environment:
-  EVERMEMO_DB          Path to the database file (default: ~/.evermemo/evermemo.db)
-  EVERMEMO_API_KEY     If set, the HTTP API requires "Authorization: Bearer <key>"
-  EVERMEMO_AGENT_KEYS  Per-agent keys "alice:key1,bob:key2" — identifies writers
-  EVERMEMO_REMOTE      URL of a central memory hub (mcp connects there instead of a local db)
-  EVERMEMO_AGENT       This process's agent name, recorded as provenance
+  EVERMEMO_DB              Path to the database file (default: ~/.evermemo/evermemo.db)
+  EVERMEMO_API_KEY         If set, the HTTP API requires "Authorization: Bearer <key>"
+  EVERMEMO_AGENT_KEYS      Per-agent keys "alice:key1,bob:key2" — identifies writers
+  EVERMEMO_RATE            Max requests/minute per caller on the HTTP API (0 = off)
+  EVERMEMO_REMOTE          URL of a central memory hub (mcp connects there instead of a local db)
+  EVERMEMO_AGENT           This process's agent name, recorded as provenance
+  EVERMEMO_EMBED_URL       Embedding provider URL (enables semantic search),
+                           e.g. http://localhost:11434 for Ollama
+  EVERMEMO_EMBED_MODEL     Embedding model (default: nomic-embed-text / text-embedding-3-small)
+  EVERMEMO_EMBED_API_KEY   Bearer key for OpenAI-compatible embedding providers
+  EVERMEMO_EMBED_PROVIDER  "ollama" (default) or "openai"
 
 Examples:
   evermemo add "User prefers dark mode and tabs over spaces"
-  echo "Deploy runs at 6pm UTC" | evermemo add --tags ops,deploy
+  echo "Deploy runs at 6pm UTC" | evermemo add --tags ops,deploy --ttl 7d
   evermemo search "deploy time"
   evermemo serve --addr :7777
+  evermemo export > memories.jsonl
   evermemo mcp --remote https://memory.internal:7777 --agent claude-code
 `
 
@@ -74,8 +86,14 @@ func main() {
 		err = cmdList(args)
 	case "get":
 		err = cmdGet(args)
+	case "update":
+		err = cmdUpdate(args)
 	case "delete", "rm":
 		err = cmdDelete(args)
+	case "export":
+		err = cmdExport(args)
+	case "import":
+		err = cmdImport(args)
 	case "mcp":
 		err = cmdMCP(args)
 	case "ui", "tui":
@@ -98,7 +116,14 @@ func openStore(dbPath string) (*store.Store, error) {
 	if dbPath == "" {
 		dbPath = store.DefaultPath()
 	}
-	return store.Open(dbPath)
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if e := embed.FromEnv(); e != nil {
+		st.SetEmbedder(e)
+	}
+	return st, nil
 }
 
 func cmdServe(args []string) error {
@@ -114,9 +139,14 @@ func cmdServe(args []string) error {
 	defer st.Close()
 
 	fmt.Printf("evermemo %s serving on %s (db: %s)\n", version, *addr, st.Path())
-	return server.Run(*addr, st, server.Auth{
-		SharedKey: os.Getenv("EVERMEMO_API_KEY"),
-		AgentKeys: server.ParseAgentKeys(os.Getenv("EVERMEMO_AGENT_KEYS")),
+	rate, _ := strconv.Atoi(os.Getenv("EVERMEMO_RATE"))
+	return server.Run(*addr, st, server.Config{
+		Auth: server.Auth{
+			SharedKey: os.Getenv("EVERMEMO_API_KEY"),
+			AgentKeys: server.ParseAgentKeys(os.Getenv("EVERMEMO_AGENT_KEYS")),
+		},
+		RatePerMin: rate,
+		Version:    version,
 	})
 }
 
@@ -126,6 +156,7 @@ func cmdAdd(args []string) error {
 	tags := fs.String("tags", "", "comma-separated tags")
 	ns := fs.String("ns", "default", "namespace")
 	meta := fs.String("meta", "", "metadata as JSON object")
+	ttl := fs.String("ttl", "", "time-to-live like 90m, 24h or 7d (memory expires after)")
 	fs.Parse(args)
 
 	content := strings.TrimSpace(strings.Join(fs.Args(), " "))
@@ -156,6 +187,10 @@ func cmdAdd(args []string) error {
 			return fmt.Errorf("invalid --meta JSON: %w", err)
 		}
 	}
+	ttlDur, err := store.ParseTTL(*ttl)
+	if err != nil {
+		return err
+	}
 
 	st, err := openStore(*db)
 	if err != nil {
@@ -163,11 +198,83 @@ func cmdAdd(args []string) error {
 	}
 	defer st.Close()
 
-	mem, err := st.Add(content, splitTags(*tags), *ns, metadata, os.Getenv("EVERMEMO_AGENT"))
+	mem, err := st.Add(store.AddRequest{
+		Content:   content,
+		Tags:      splitTags(*tags),
+		Namespace: *ns,
+		Metadata:  metadata,
+		Agent:     os.Getenv("EVERMEMO_AGENT"),
+		TTL:       ttlDur,
+	})
 	if err != nil {
 		return err
 	}
 	fmt.Println(mem.ID)
+	return nil
+}
+
+func cmdUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	tags := fs.String("tags", "", "comma-separated tags (replaces existing when set)")
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: evermemo update [flags] <id> [new content]")
+	}
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	var newTags []string
+	if *tags != "" {
+		newTags = splitTags(*tags)
+	}
+	mem, err := st.Update(fs.Arg(0), strings.Join(fs.Args()[1:], " "), newTags)
+	if err != nil {
+		return err
+	}
+	fmt.Println("updated", mem.ID)
+	return nil
+}
+
+func cmdExport(args []string) error {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	fs.Parse(args)
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	n, err := st.ExportJSONL(os.Stdout)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "exported %d memories\n", n)
+	return nil
+}
+
+func cmdImport(args []string) error {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	fs.Parse(args)
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	n, err := st.ImportJSONL(os.Stdin)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "imported %d memories\n", n)
 	return nil
 }
 

@@ -19,7 +19,8 @@ const protocolVersion = "2024-11-05"
 // both *store.Store (local database) and *client.Client (remote memory hub),
 // so any agent can run against its own file or the organization's shared brain.
 type Backend interface {
-	Add(content string, tags []string, namespace string, metadata map[string]any, agent string) (*store.Memory, error)
+	Add(req store.AddRequest) (*store.Memory, error)
+	Update(id, content string, tags []string) (*store.Memory, error)
 	Search(query, namespace string, limit int) ([]*store.Memory, error)
 	List(namespace string, limit int) ([]*store.Memory, error)
 	Delete(id string) error
@@ -65,18 +66,38 @@ func Serve(st Backend, version, agent string) error {
 		if len(req.ID) == 0 || string(req.ID) == "null" {
 			continue
 		}
-		resp := response{JSONRPC: "2.0", ID: req.ID}
-		result, err := handle(st, version, agent, req)
-		if err != nil {
-			resp.Error = &rpcError{Code: -32603, Message: err.Error()}
-		} else {
-			resp.Result = result
-		}
+		resp := Handle(st, version, agent, req)
 		if err := out.Encode(resp); err != nil {
 			return err
 		}
 	}
 	return in.Err()
+}
+
+// HandleRaw parses a single JSON-RPC message and returns the response, or
+// nil for notifications and malformed input. It powers the HTTP transport.
+func HandleRaw(st Backend, version, agent string, raw []byte) *response {
+	var req request
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return &response{JSONRPC: "2.0", Error: &rpcError{Code: -32700, Message: "parse error"}}
+	}
+	if len(req.ID) == 0 || string(req.ID) == "null" {
+		return nil
+	}
+	resp := Handle(st, version, agent, req)
+	return &resp
+}
+
+// Handle dispatches one request and builds the JSON-RPC response.
+func Handle(st Backend, version, agent string, req request) response {
+	resp := response{JSONRPC: "2.0", ID: req.ID}
+	result, err := handle(st, version, agent, req)
+	if err != nil {
+		resp.Error = &rpcError{Code: -32603, Message: err.Error()}
+	} else {
+		resp.Result = result
+	}
+	return resp
 }
 
 func handle(st Backend, version, agent string, req request) (any, error) {
@@ -121,7 +142,17 @@ func toolDefs() []map[string]any {
 				"content":   str("The memory content to store"),
 				"tags":      str("Optional comma-separated tags, e.g. 'prefs,ui'"),
 				"namespace": str("Optional namespace to group memories (default: 'default')"),
+				"ttl":       str("Optional time-to-live like '90m', '24h' or '7d'; the memory expires after this"),
 			}, "content"),
+		},
+		{
+			"name":        "update_memory",
+			"description": "Update an existing memory's content and/or tags by id. Use when stored knowledge is outdated or wrong.",
+			"inputSchema": obj(map[string]any{
+				"id":      str("The memory id to update"),
+				"content": str("New content (omit to keep current)"),
+				"tags":    str("New comma-separated tags (omit to keep current)"),
+			}, "id"),
 		},
 		{
 			"name":        "search_memory",
@@ -174,18 +205,34 @@ func callTool(st Backend, agent string, params json.RawMessage) (any, error) {
 	)
 	switch p.Name {
 	case "add_memory":
+		ttl, terr := store.ParseTTL(getStr("ttl"))
+		if terr != nil {
+			err = terr
+			break
+		}
+		var mem *store.Memory
+		mem, err = st.Add(store.AddRequest{
+			Content:   getStr("content"),
+			Tags:      splitTags(getStr("tags")),
+			Namespace: getStr("namespace"),
+			Agent:     agent,
+			TTL:       ttl,
+		})
+		if err == nil {
+			text = fmt.Sprintf("Stored memory %s", mem.ID)
+		}
+	case "update_memory":
 		var tags []string
-		if t := getStr("tags"); t != "" {
-			for _, s := range strings.Split(t, ",") {
-				if s = strings.TrimSpace(s); s != "" {
-					tags = append(tags, s)
-				}
+		if _, ok := args["tags"]; ok {
+			tags = splitTags(getStr("tags"))
+			if tags == nil {
+				tags = []string{}
 			}
 		}
 		var mem *store.Memory
-		mem, err = st.Add(getStr("content"), tags, getStr("namespace"), nil, agent)
+		mem, err = st.Update(getStr("id"), getStr("content"), tags)
 		if err == nil {
-			text = fmt.Sprintf("Stored memory %s", mem.ID)
+			text = fmt.Sprintf("Updated memory %s", mem.ID)
 		}
 	case "search_memory":
 		var results []*store.Memory
@@ -237,4 +284,14 @@ func formatResults(results []*store.Memory) string {
 		}
 	}
 	return b.String()
+}
+
+func splitTags(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -4,7 +4,6 @@
 package tui
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,18 +31,17 @@ const boxWidth = 66 // inner width of the banner box
 func Run(st *store.Store, version string) error {
 	printBanner(st, version)
 
-	sc := bufio.NewScanner(os.Stdin)
-	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	rd := newLineReader()
 	ns := "default"
 
 	for {
-		fmt.Printf("%s❯%s ", orange+bold, reset)
-		if !sc.Scan() {
+		raw, ok := rd.readLine(orange + bold + "❯ " + reset)
+		if !ok {
 			fmt.Println()
 			bye()
-			return sc.Err()
+			return nil
 		}
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
@@ -56,7 +54,7 @@ func Run(st *store.Store, version string) error {
 			continue
 		}
 		// Plain text → remember it.
-		mem, err := st.Add(line, nil, ns, nil, os.Getenv("EVERMEMO_AGENT"))
+		mem, err := st.Add(store.AddRequest{Content: line, Namespace: ns, Agent: os.Getenv("EVERMEMO_AGENT")})
 		if err != nil {
 			errorf("%v", err)
 		} else {

@@ -81,12 +81,26 @@ func (c *Client) do(method, path string, body, out any) error {
 }
 
 // Add stores a memory on the hub. The agent identity comes from the client's
-// credentials (per-agent key or X-Agent header), so the parameter is unused
-// beyond satisfying the shared backend shape.
-func (c *Client) Add(content string, tags []string, namespace string, metadata map[string]any, _ string) (*store.Memory, error) {
+// credentials (per-agent key or X-Agent header), so req.Agent is not sent.
+func (c *Client) Add(req store.AddRequest) (*store.Memory, error) {
+	body := map[string]any{
+		"content": req.Content, "tags": req.Tags, "namespace": req.Namespace, "metadata": req.Metadata,
+	}
+	if req.TTL != 0 {
+		body["ttl"] = req.TTL.String()
+	}
 	var m store.Memory
-	err := c.do("POST", "/v1/memories", map[string]any{
-		"content": content, "tags": tags, "namespace": namespace, "metadata": metadata,
+	if err := c.do("POST", "/v1/memories", body, &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// Update modifies a memory's content and/or tags on the hub.
+func (c *Client) Update(id, content string, tags []string) (*store.Memory, error) {
+	var m store.Memory
+	err := c.do("PUT", "/v1/memories/"+url.PathEscape(id), map[string]any{
+		"content": content, "tags": tags,
 	}, &m)
 	if err != nil {
 		return nil, err
