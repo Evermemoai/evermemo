@@ -1,0 +1,4 @@
+evermemo
+*.db
+*.db-wal
+*.db-shm
