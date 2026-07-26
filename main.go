@@ -42,6 +42,7 @@ Commands:
   verify    Vote on a memory: evermemo verify <id> confirm|dispute
   export    Write all memories as JSONL to stdout
   import    Read JSONL memories from stdin
+  backup    Snapshot the database safely while serving: evermemo backup dest.db
   consolidate  LLM-powered memory hygiene: merge duplicates, resolve contradictions
   proxy     Auto-recall proxy in front of an LLM API (injects relevant memories)
   mcp       Run as an MCP server over stdio (for Claude Code, Cursor, etc.)
@@ -113,6 +114,8 @@ func main() {
 		err = cmdExport(args)
 	case "import":
 		err = cmdImport(args)
+	case "backup":
+		err = cmdBackup(args)
 	case "consolidate":
 		err = cmdConsolidate(args)
 	case "proxy":
@@ -153,7 +156,14 @@ func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", ":7777", "address to listen on")
 	db := fs.String("db", "", "database path (default: ~/.evermemo/evermemo.db)")
+	cert := fs.String("cert", os.Getenv("EVERMEMO_TLS_CERT"), "TLS certificate file (enables HTTPS with --key)")
+	key := fs.String("key", os.Getenv("EVERMEMO_TLS_KEY"), "TLS private key file")
+	keysFile := fs.String("keys-file", os.Getenv("EVERMEMO_KEYS_FILE"), "agent keys file (agent:key per line), hot-reloaded on change")
 	fs.Parse(args)
+
+	if (*cert == "") != (*key == "") {
+		return fmt.Errorf("--cert and --key must be set together")
+	}
 
 	st, err := openStore(*db)
 	if err != nil {
@@ -161,17 +171,45 @@ func cmdServe(args []string) error {
 	}
 	defer st.Close()
 
-	fmt.Printf("evermemo %s serving on %s (db: %s)\n", version, *addr, st.Path())
+	scheme := "http"
+	if *cert != "" {
+		scheme = "https"
+	}
+	fmt.Printf("evermemo %s serving %s on %s (db: %s)\n", version, scheme, *addr, st.Path())
 	rate, _ := strconv.Atoi(os.Getenv("EVERMEMO_RATE"))
 	return server.Run(*addr, st, server.Config{
-		Auth: server.Auth{
+		Auth: &server.Auth{
 			SharedKey: os.Getenv("EVERMEMO_API_KEY"),
 			AgentKeys: server.ParseAgentKeys(os.Getenv("EVERMEMO_AGENT_KEYS")),
+			KeysFile:  *keysFile,
 		},
 		ACL:        server.ParseACL(os.Getenv("EVERMEMO_ACL")),
 		RatePerMin: rate,
 		Version:    version,
+		CertFile:   *cert,
+		KeyFile:    *key,
 	})
+}
+
+func cmdBackup(args []string) error {
+	fs := flag.NewFlagSet("backup", flag.ExitOnError)
+	db := fs.String("db", "", "database path")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: evermemo backup <destination.db>")
+	}
+
+	st, err := openStore(*db)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if err := st.Backup(fs.Arg(0)); err != nil {
+		return err
+	}
+	fmt.Println("backup written to", fs.Arg(0))
+	return nil
 }
 
 func cmdAdd(args []string) error {

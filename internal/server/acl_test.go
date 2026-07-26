@@ -48,7 +48,7 @@ func TestParseACL(t *testing.T) {
 
 func TestACLEnforcementHTTP(t *testing.T) {
 	cfg := Config{
-		Auth: Auth{AgentKeys: map[string]string{"finbot": "fk", "hrbot": "hk"}},
+		Auth: &Auth{AgentKeys: map[string]string{"finbot": "fk", "hrbot": "hk"}},
 		ACL:  ParseACL("finbot:finance:rw,hrbot:hr:rw,hrbot:finance:r"),
 	}
 	srv, st := testServer(t, cfg)
@@ -97,7 +97,7 @@ func TestACLEnforcementHTTP(t *testing.T) {
 
 func TestACLEnforcementMCP(t *testing.T) {
 	cfg := Config{
-		Auth:    Auth{AgentKeys: map[string]string{"finbot": "fk", "hrbot": "hk"}},
+		Auth:    &Auth{AgentKeys: map[string]string{"finbot": "fk", "hrbot": "hk"}},
 		ACL:     ParseACL("finbot:finance:rw,hrbot:hr:rw"),
 		Version: "test",
 	}
@@ -119,7 +119,7 @@ func TestACLEnforcementMCP(t *testing.T) {
 }
 
 func TestLinkAndVerifyEndpoints(t *testing.T) {
-	srv, st := testServer(t, Config{Auth: Auth{AgentKeys: map[string]string{"bot": "bk", "bot2": "b2"}}})
+	srv, st := testServer(t, Config{Auth: &Auth{AgentKeys: map[string]string{"bot": "bk", "bot2": "b2"}}})
 	a, _ := st.Add(store.AddRequest{Content: "old"})
 	b, _ := st.Add(store.AddRequest{Content: "new"})
 

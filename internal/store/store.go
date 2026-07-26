@@ -476,6 +476,25 @@ func (s *Store) Count() (int, error) {
 	return n, err
 }
 
+// Backup writes a consistent snapshot of the database to dest using SQLite's
+// VACUUM INTO — safe to run while the hub is serving traffic. Fails if dest
+// already exists.
+func (s *Store) Backup(dest string) error {
+	if dest == "" {
+		return fmt.Errorf("backup destination required")
+	}
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("destination %q already exists", dest)
+	}
+	if dir := filepath.Dir(dest); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("creating backup directory: %w", err)
+		}
+	}
+	_, err := s.db.Exec(`VACUUM INTO ?`, dest)
+	return err
+}
+
 // ftsQuery sanitizes a user query into a safe FTS5 MATCH expression:
 // each token is double-quoted (so FTS5 operators/punctuation are treated
 // literally) and joined with OR, letting BM25 rank partial matches.

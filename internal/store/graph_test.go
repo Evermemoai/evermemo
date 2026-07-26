@@ -1,8 +1,36 @@
 package store
 
 import (
+	"path/filepath"
 	"testing"
 )
+
+func TestBackup(t *testing.T) {
+	st := testStore(t)
+	st.Add(AddRequest{Content: "precious data"})
+
+	dest := filepath.Join(t.TempDir(), "backup.db")
+	if err := st.Backup(dest); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	// Backing up onto an existing file must fail.
+	if err := st.Backup(dest); err == nil {
+		t.Error("overwrite should fail")
+	}
+
+	// The snapshot is a fully working database.
+	bk, err := Open(dest)
+	if err != nil {
+		t.Fatalf("open backup: %v", err)
+	}
+	defer bk.Close()
+	if n, _ := bk.Count(); n != 1 {
+		t.Errorf("backup count = %d, want 1", n)
+	}
+	if res, _ := bk.Search("precious", "", 5); len(res) != 1 {
+		t.Error("backup FTS index broken")
+	}
+}
 
 func TestLinksAndGet(t *testing.T) {
 	st := testStore(t)

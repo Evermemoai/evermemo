@@ -33,20 +33,83 @@ const agentKey ctxKey = 0
 //   - AgentKeys: per-agent identities, "name -> key" ($EVERMEMO_AGENT_KEYS,
 //     format "alice:key1,bob:key2"). The authenticated agent name is recorded
 //     as provenance on every memory it writes.
+//   - KeysFile: path to a file of per-agent keys (one "agent:key" per line,
+//     # comments allowed). The file is re-read whenever its mtime changes,
+//     so keys can be added, rotated, or revoked without restarting the hub.
+//     File entries override AgentKeys on name collision.
 //
-// If both are empty the API is open (agent name may still be supplied via
+// If all are empty the API is open (agent name may still be supplied via
 // the X-Agent header).
 type Auth struct {
 	SharedKey string
 	AgentKeys map[string]string
+	KeysFile  string
+
+	mu       sync.Mutex
+	fileMod  time.Time
+	fileKeys map[string]string
+}
+
+// enabled reports whether any authentication is configured.
+func (a *Auth) enabled() bool {
+	return a.SharedKey != "" || len(a.AgentKeys) > 0 || a.KeysFile != ""
+}
+
+// agentKeys returns the effective per-agent key set, reloading the keys
+// file when it has changed on disk.
+func (a *Auth) agentKeys() map[string]string {
+	if a.KeysFile == "" {
+		return a.AgentKeys
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if fi, err := os.Stat(a.KeysFile); err == nil {
+		if !fi.ModTime().Equal(a.fileMod) {
+			if data, err := os.ReadFile(a.KeysFile); err == nil {
+				a.fileKeys = parseKeysFile(string(data))
+				a.fileMod = fi.ModTime()
+				log.Printf("reloaded %d agent keys from %s", len(a.fileKeys), a.KeysFile)
+			}
+		}
+	} else {
+		// File removed: revoke file-sourced keys.
+		a.fileKeys = nil
+		a.fileMod = time.Time{}
+	}
+	merged := make(map[string]string, len(a.AgentKeys)+len(a.fileKeys))
+	for k, v := range a.AgentKeys {
+		merged[k] = v
+	}
+	for k, v := range a.fileKeys {
+		merged[k] = v
+	}
+	return merged
+}
+
+// parseKeysFile parses "agent:key" lines; blank lines and # comments allowed.
+func parseKeysFile(s string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, key, ok := strings.Cut(line, ":")
+		if ok && name != "" && key != "" {
+			out[strings.TrimSpace(name)] = strings.TrimSpace(key)
+		}
+	}
+	return out
 }
 
 // Config configures the HTTP server.
 type Config struct {
-	Auth       Auth
+	Auth       *Auth
 	ACL        *ACL   // nil = no namespace restrictions
 	RatePerMin int    // per-caller requests/minute on /v1 and /mcp; 0 = unlimited
 	Version    string // reported by the MCP transport
+	CertFile   string // serve HTTPS when both CertFile and KeyFile are set
+	KeyFile    string
 }
 
 // ACL restricts which agents may read/write which namespaces.
@@ -139,7 +202,13 @@ func Run(addr string, st *store.Store, cfg Config) error {
 	defer stop()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- srv.ListenAndServe() }()
+	go func() {
+		if cfg.CertFile != "" && cfg.KeyFile != "" {
+			errCh <- srv.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
+		} else {
+			errCh <- srv.ListenAndServe()
+		}
+	}()
 
 	select {
 	case err := <-errCh:
@@ -478,15 +547,15 @@ func protected(path string) bool {
 	return strings.HasPrefix(path, "/v1/") || path == "/mcp"
 }
 
-func withAuth(auth Auth, next http.Handler) http.Handler {
+func withAuth(auth *Auth, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !protected(r.URL.Path) || (auth.SharedKey == "" && len(auth.AgentKeys) == 0) {
+		if !protected(r.URL.Path) || auth == nil || !auth.enabled() {
 			next.ServeHTTP(w, r)
 			return
 		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		// Per-agent keys: identify the caller.
-		for name, key := range auth.AgentKeys {
+		for name, key := range auth.agentKeys() {
 			if subtle.ConstantTimeCompare([]byte(got), []byte(key)) == 1 {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), agentKey, name)))
 				return

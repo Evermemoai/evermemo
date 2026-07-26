@@ -156,6 +156,27 @@ evermemo serve
 
 Enforced on both the REST API and the `/mcp` transport. No ACL set = open.
 
+## Production hub: TLS, key rotation, backups
+
+```sh
+# HTTPS (or terminate TLS in Caddy/nginx in front)
+evermemo serve --cert cert.pem --key key.pem
+
+# Hot-reloading keys file: add/rotate/revoke agent keys without restart
+cat > keys.txt <<EOF
+# agent:key, one per line
+claude:key1
+cursor:key2
+EOF
+evermemo serve --keys-file keys.txt   # edits picked up automatically
+
+# Consistent online snapshot (safe while serving; uses SQLite VACUUM INTO)
+evermemo backup /backups/evermemo-$(date +%F).db
+```
+
+⚠️ Bearer keys travel in cleartext over plain HTTP — always use TLS (built-in
+or a reverse proxy) when the hub is reachable beyond localhost.
+
 ## Memory consolidation (LLM-powered hygiene)
 
 Over time memories accumulate duplicates and contradictions. Point evermemo
@@ -206,6 +227,8 @@ shared hub.
 | `EVERMEMO_LLM_MODEL` | provider default       | Chat model name                  |
 | `EVERMEMO_LLM_API_KEY` | *(unset)*            | Key for OpenAI-compatible chat providers |
 | `EVERMEMO_ACL`     | *(unset)*                | Namespace ACLs: `agent:ns:perm` (r/rw, `*` wildcards) |
+| `EVERMEMO_TLS_CERT` / `EVERMEMO_TLS_KEY` | *(unset)* | TLS cert/key files for `serve` |
+| `EVERMEMO_KEYS_FILE` | *(unset)*              | Hot-reloading agent keys file    |
 
 Every command also accepts `--db` to point at a specific database, and `--ns`/`namespace` to partition memories (per project, per user, per agent — your call).
 

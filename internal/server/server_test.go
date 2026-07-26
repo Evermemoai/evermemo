@@ -58,7 +58,7 @@ func TestOpenAccessWhenNoKeys(t *testing.T) {
 }
 
 func TestSharedKeyAuth(t *testing.T) {
-	srv, _ := testServer(t, Config{Auth: Auth{SharedKey: "s3cret"}})
+	srv, _ := testServer(t, Config{Auth: &Auth{SharedKey: "s3cret"}})
 
 	resp, _ := request(t, "GET", srv.URL+"/v1/memories", "", "")
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -80,7 +80,7 @@ func TestSharedKeyAuth(t *testing.T) {
 }
 
 func TestPerAgentProvenance(t *testing.T) {
-	srv, _ := testServer(t, Config{Auth: Auth{AgentKeys: map[string]string{"claude": "ck"}}})
+	srv, _ := testServer(t, Config{Auth: &Auth{AgentKeys: map[string]string{"claude": "ck"}}})
 
 	resp, body := request(t, "POST", srv.URL+"/v1/memories", "ck", `{"content":"a fact"}`)
 	if resp.StatusCode != http.StatusCreated {
@@ -152,7 +152,7 @@ func TestRateLimit(t *testing.T) {
 }
 
 func TestMCPOverHTTP(t *testing.T) {
-	srv, _ := testServer(t, Config{Auth: Auth{AgentKeys: map[string]string{"bot": "bk"}}, Version: "test"})
+	srv, _ := testServer(t, Config{Auth: &Auth{AgentKeys: map[string]string{"bot": "bk"}}, Version: "test"})
 
 	// initialize
 	resp, body := request(t, "POST", srv.URL+"/mcp", "bk",
