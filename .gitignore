@@ -2,3 +2,7 @@ evermemo
 *.db
 *.db-wal
 *.db-shm
+
+# Local environment overrides (never commit real keys)
+.env
+.env.local
