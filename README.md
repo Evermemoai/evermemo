@@ -8,12 +8,12 @@
 
 **A tiny, universal memory engine for humans and AI agents.**
 
-One small Go binary. No external services. It's a CLI, an HTTP API, and an MCP server — so *anything* can remember things: your terminal, your scripts, Claude Code, Cursor, or any agent in any industry. Run one as a hub and every agent in your organization shares, synchronizes, and reasons over the same trusted knowledge.
+One small Go binary. No external services. It works as a CLI, an HTTP API, and an MCP server, so anything can remember things: your terminal, your scripts, Claude Code, Cursor, or any other agent. Run one as a hub and every agent in your organization shares the same trusted knowledge.
 
 ```
 ┌──────────────┐   ┌─────────────┐   ┌──────────────────┐
 │  You (CLI)   │   │  Any app    │   │  AI agents (MCP)  │
-│ evermemo add │   │  HTTP API   │   │  Claude, Cursor…  │
+│ evermemo add │   │  HTTP API   │   │  Claude, Cursor   │
 └──────┬───────┘   └──────┬──────┘   └────────┬─────────┘
        └──────────────────┼──────────────────┘
                   ┌───────▼──────┐
@@ -24,7 +24,7 @@ One small Go binary. No external services. It's a CLI, an HTTP API, and an MCP s
 
 ## Install
 
-**Prebuilt binaries** (macOS, Linux, Windows — amd64/arm64):
+**Prebuilt binaries** (macOS, Linux, Windows, amd64/arm64):
 grab one from [Releases](https://github.com/Evermemoai/evermemo/releases).
 
 **Go:**
@@ -83,7 +83,7 @@ evermemo serve --addr :7777
 | GET    | `/v1/memories/{id}`  | Get one                              |
 | PUT    | `/v1/memories/{id}`  | Update: `{content?, tags?}`          |
 | DELETE | `/v1/memories/{id}`  | Delete                               |
-| POST   | `/mcp`               | MCP over HTTP (JSON-RPC) — no local binary needed |
+| POST   | `/mcp`               | MCP over HTTP (JSON-RPC), no local binary needed |
 
 ```sh
 curl -X POST localhost:7777/v1/memories \
@@ -119,13 +119,13 @@ claude mcp add evermemo -- /path/to/evermemo mcp
 }
 ```
 
-Now your agent can remember things across sessions — automatically.
+Now your agent remembers things across sessions.
 
 ## Shared memory for all your agents (hub mode)
 
 Run one evermemo as your organization's memory hub, and point every agent at it.
-All agents share, search, and build on the same trusted knowledge — and every
-memory records **which agent wrote it**.
+All agents share, search, and build on the same knowledge, and every memory
+records which agent wrote it.
 
 ```sh
 # On the hub machine: one key per agent identity
@@ -140,23 +140,23 @@ provenance (`"agent": "claude"`) on every memory. Requests with unknown keys
 are rejected. `EVERMEMO_REMOTE`, `EVERMEMO_API_KEY`, and `EVERMEMO_AGENT` env
 vars work as flag defaults. Set `EVERMEMO_RATE=120` to cap each caller at 120
 requests/minute. Agents can also talk MCP straight to the hub over HTTP
-(`POST /mcp`) — no local binary required.
+(`POST /mcp`) without a local binary.
 
 ## Semantic search (optional)
 
-By default search is SQLite FTS5 with BM25 ranking — fast, offline, zero
+By default search is SQLite FTS5 with BM25 ranking: fast, offline, zero
 dependencies. Point evermemo at an embedding provider and search becomes
-**hybrid**: BM25 + cosine similarity, fused with Reciprocal Rank Fusion, so
-“when do we deploy” finds “release schedule is thursdays”.
+hybrid (BM25 plus cosine similarity, fused with Reciprocal Rank Fusion), so
+"when do we deploy" finds "release schedule is thursdays".
 
 ```sh
 # Ollama (local, free)
 export EVERMEMO_EMBED_URL=http://localhost:11434
 export EVERMEMO_EMBED_MODEL=nomic-embed-text   # default
 
-# …or any OpenAI-compatible API
+# ...or any OpenAI-compatible API
 export EVERMEMO_EMBED_URL=https://api.openai.com
-export EVERMEMO_EMBED_API_KEY=sk-…
+export EVERMEMO_EMBED_API_KEY=sk-...
 ```
 
 Memories are embedded on write; if the provider is down, search silently
@@ -164,15 +164,15 @@ falls back to keyword-only.
 
 ## Trusted knowledge: provenance, confidence, graphs, ACLs
 
-Every memory records **who wrote it**. On top of that:
+Every memory records who wrote it. On top of that:
 
-- **Verification** — agents confirm or dispute each other's memories
+- **Verification**: agents confirm or dispute each other's memories
   (`verify_memory` tool, `POST /v1/memories/{id}/verify`). Votes move a
-  confidence score (starts 0.6; +0.10 per confirm, −0.15 per dispute).
-- **Memory graphs** — link memories with `supersedes`, `relates_to`, or
+  confidence score (starts at 0.6; +0.10 per confirm, -0.15 per dispute).
+- **Memory graphs**: link memories with `supersedes`, `relates_to`, or
   `derived_from` (`link_memory` tool, `evermemo link <from> <rel> <to>`)
   to trace how knowledge evolved. Links come back on `GET /v1/memories/{id}`.
-- **Namespace ACLs** — restrict which agents can read/write which namespaces:
+- **Namespace ACLs**: restrict which agents can read or write which namespaces:
 
 ```sh
 EVERMEMO_ACL='finbot:finance:rw,hrbot:hr:rw,hrbot:finance:r,auditor:*:r' \
@@ -180,7 +180,8 @@ EVERMEMO_AGENT_KEYS='finbot:key1,hrbot:key2,auditor:key3' \
 evermemo serve
 ```
 
-Enforced on both the REST API and the `/mcp` transport. No ACL set = open.
+Enforced on both the REST API and the `/mcp` transport. If no ACL is set,
+access is open.
 
 ## Production hub: TLS, key rotation, backups
 
@@ -200,8 +201,8 @@ evermemo serve --keys-file keys.txt   # edits picked up automatically
 evermemo backup /backups/evermemo-$(date +%F).db
 ```
 
-⚠️ Bearer keys travel in cleartext over plain HTTP — always use TLS (built-in
-or a reverse proxy) when the hub is reachable beyond localhost.
+Note: bearer keys travel in cleartext over plain HTTP. Always use TLS
+(built-in or a reverse proxy) when the hub is reachable beyond localhost.
 
 ## Memory consolidation (LLM-powered hygiene)
 
@@ -222,7 +223,7 @@ from search, kept for audit) and linked to their replacement with
 ## Auto-recall proxy (memory without tools)
 
 Put evermemo between your app and the LLM API, and relevant memories are
-injected into every chat request automatically — no `search_memory` calls
+injected into every chat request automatically. No `search_memory` calls
 needed:
 
 ```sh
@@ -256,13 +257,13 @@ shared hub.
 | `EVERMEMO_TLS_CERT` / `EVERMEMO_TLS_KEY` | *(unset)* | TLS cert/key files for `serve` |
 | `EVERMEMO_KEYS_FILE` | *(unset)*              | Hot-reloading agent keys file    |
 
-Every command also accepts `--db` to point at a specific database, and `--ns`/`namespace` to partition memories (per project, per user, per agent — your call).
+Every command also accepts `--db` to point at a specific database, and `--ns`/`namespace` to partition memories per project, per user, or per agent.
 
 ## Why
 
 - **Small**: one binary, one SQLite file, zero dependencies to run.
 - **Universal**: CLI for humans, HTTP for any language, MCP for any agent.
-- **Fast**: SQLite FTS5 with BM25 ranking — millisecond search on millions of rows.
+- **Fast**: SQLite FTS5 with BM25 ranking; millisecond search on millions of rows.
 - **Yours**: local-first, no cloud, no telemetry. `scp` the file to back it up.
 
 ## Roadmap
@@ -277,7 +278,7 @@ Every command also accepts `--db` to point at a specific database, and `--ns`/`n
 
 ## Contributing
 
-Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 Found a security issue? Please follow [SECURITY.md](SECURITY.md).
 
 ## License
