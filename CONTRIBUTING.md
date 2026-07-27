@@ -14,6 +14,26 @@ go test ./...
 
 Requirements: Go 1.25+. No other toolchain needed.
 
+## Environment setup
+
+evermemo needs **no configuration** to build, test, or run — it defaults to a
+local SQLite database with keyword (BM25) search. All environment variables are
+optional and only enable extra features (semantic search, consolidation, HTTP
+auth, hub mode).
+
+A documented [.env.example](.env.example) lists every variable with local dev
+defaults. evermemo does **not** auto-load `.env`, so load it into your shell
+first:
+
+```sh
+cp .env.example .env       # then edit the values you need
+set -a; . ./.env; set +a   # bash / zsh
+go run . serve
+```
+
+For a fully-offline setup with Ollama (semantic search + consolidation), see
+[docs/ollama.md](docs/ollama.md). Never commit a real `.env` — it's gitignored.
+
 ## Guidelines
 
 - **Keep it small.** New dependencies need a strong reason; pure-Go only

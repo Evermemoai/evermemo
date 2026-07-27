@@ -162,6 +162,10 @@ export EVERMEMO_EMBED_API_KEY=sk-...
 Memories are embedded on write; if the provider is down, search silently
 falls back to keyword-only.
 
+For a complete, step-by-step **fully-offline setup with Ollama** (semantic
+search, consolidation, and the auto-recall proxy — all local, no cloud), see
+[docs/ollama.md](docs/ollama.md).
+
 ## Trusted knowledge: provenance, confidence, graphs, ACLs
 
 Every memory records who wrote it. On top of that:
