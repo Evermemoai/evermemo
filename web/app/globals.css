@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+/* Phantom brand font */
+@font-face {
+  font-family: "Phantom";
+  src: url("https://assets.loftlyy.com/brands/phantom/fonts/phantom-regular.woff2") format("woff2");
+  font-weight: 300 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+  Phantom brand palette
+  Purple  #AB9FF2 · Deep Purple #3C315B · Lavender #E2DFFE
+  Cream   #FFFDF8 · Lime        #F1FF52 · Black    #191919
+*/
+
+@layer base {
+  :root,
+  [data-theme="light"] {
+    --background: #fffdf8; /* cream */
+    --foreground: #191919; /* black */
+
+    --surface: #fffdf8;
+    --surface-foreground: #191919;
+    --surface-secondary: #e2dffe; /* lavender */
+    --surface-secondary-foreground: #3c315b;
+    --surface-tertiary: #f2f0fe;
+    --surface-tertiary-foreground: #3c315b;
+
+    --overlay: #fffdf8;
+    --overlay-foreground: #191919;
+
+    --accent: #ab9ff2; /* Evermemo purple */
+    --accent-foreground: #191919;
+    --accent-soft: #e2dffe;
+    --accent-soft-foreground: #3c315b;
+
+    --success: #74a957;
+    --warning: #b7982f;
+    --danger: #d4585c;
+
+    --muted: #6f6a83;
+    --border: color-mix(in oklch, #3c315b 18%, transparent);
+    --separator: color-mix(in oklch, #3c315b 14%, transparent);
+    --focus: #fffdf8;
+    --link: #fffdf8;
+  }
+
+  .dark,
+  [data-theme="dark"] {
+    --background: #191919; /* Evermemo black */
+    --foreground: #fffdf8; /* cream */
+
+    --surface: #212121; /* neutral grey for cards/tables */
+    --surface-foreground: #fffdf8;
+    --surface-secondary: #2a2a2a;
+    --surface-secondary-foreground: #e2dffe;
+    --surface-tertiary: #303030;
+    --surface-tertiary-foreground: #e2dffe;
+
+    --overlay: #191919; /* Evermemo black for modals/popovers */
+    --overlay-foreground: #fffdf8;
+
+    /* Form fields: neutral grey */
+    --field-background: #2a2a2a;
+    --field-foreground: #fffdf8;
+    --field-placeholder: #8f8f8f;
+    --field-border: transparent;
+
+    /* Neutral buttons/segments (default variant) */
+    --default: #2a2a2a;
+    --default-foreground: #fffdf8;
+    --segment: #2a2a2a;
+    --segment-foreground: #fffdf8;
+
+    --accent: #FFFDF8; /* Evermemo white */
+    --accent-foreground: #191919;
+    --accent-soft: color-mix(in oklch, #FFFDF8 10%, transparent);
+    --accent-soft-foreground: #e2dffe;
+
+    --success: #f1ff52; /* Evermemo lime for positive states */
+    --success-foreground: #191919;
+    --warning: #e8c547;
+    --danger: #ff7a85;
+
+    --muted: #939393;
+    --border: color-mix(in oklch, #FFFDF8 16%, transparent);
+    --separator: color-mix(in oklch, #FFFDF8 12%, transparent);
+    --focus: #FFFDF8;
+    --link: #FFFDF8;
+  }
+}
+
+@theme inline {
+  --font-sans: "Phantom", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* Toasts: size to their content (right-anchored for bottom-end placement) */
+.toast {
+  left: auto !important;
+  width: fit-content !important;
+  min-width: 18rem !important;
+  max-width: min(26rem, calc(100vw - 2rem));
+}

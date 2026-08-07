@@ -19,8 +19,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Evermemoai/evermemo/internal/consolidate"
+	"github.com/Evermemoai/evermemo/internal/llm"
 	"github.com/Evermemoai/evermemo/internal/mcp"
 	"github.com/Evermemoai/evermemo/internal/store"
+	"github.com/Evermemoai/evermemo/internal/webui"
 )
 
 type ctxKey int
@@ -427,8 +430,88 @@ func Handler(st *store.Store, cfg Config) http.Handler {
 		writeJSON(w, http.StatusOK, resp)
 	})
 
+	// Export all memories as JSONL (requires cross-namespace read).
+	mux.HandleFunc("GET /v1/export", func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.ACL.Allow(agentFrom(r), "*", false) {
+			writeError(w, http.StatusForbidden, "export requires cross-namespace read access")
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Content-Disposition", `attachment; filename="evermemo-export.jsonl"`)
+		if _, err := st.ExportJSONL(w); err != nil {
+			log.Printf("export: %v", err)
+		}
+	})
+
+	// Import memories from a JSONL body (requires cross-namespace write).
+	mux.HandleFunc("POST /v1/import", func(w http.ResponseWriter, r *http.Request) {
+		if !cfg.ACL.Allow(agentFrom(r), "*", true) {
+			writeError(w, http.StatusForbidden, "import requires cross-namespace write access")
+			return
+		}
+		n, err := st.ImportJSONL(http.MaxBytesReader(w, r.Body, 64<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]int{"imported": n})
+	})
+
+	// Run LLM consolidation (merge duplicates, resolve contradictions).
+	// Requires an LLM configured on the hub via EVERMEMO_LLM_URL.
+	mux.HandleFunc("POST /v1/consolidate", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Namespace string `json:"namespace"`
+			DryRun    bool   `json:"dry_run"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+		check := req.Namespace
+		if check == "" {
+			check = "*"
+		}
+		if !cfg.ACL.Allow(agentFrom(r), check, true) {
+			writeError(w, http.StatusForbidden, "consolidation requires write access to the namespace")
+			return
+		}
+		ai := llm.FromEnv()
+		if ai == nil {
+			writeError(w, http.StatusServiceUnavailable, "no LLM configured on the hub: set EVERMEMO_LLM_URL")
+			return
+		}
+		rep, err := consolidate.Run(st, ai, req.Namespace, req.DryRun)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, rep)
+	})
+
+	// Embedded web dashboard (built via scripts/build-web.sh).
+	mux.Handle("GET /ui/", http.StripPrefix("/ui", webui.Handler()))
+	mux.HandleFunc("GET /ui", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusMovedPermanently)
+	})
+
 	limited := withRateLimit(cfg.RatePerMin, mux)
-	return withLogging(withAuth(cfg.Auth, limited))
+	return withCORS(withLogging(withAuth(cfg.Auth, limited)))
+}
+
+// withCORS allows browser dashboards on other origins to call the API with
+// bearer keys. No cookies are used, so a wildcard origin is safe.
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Agent")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // agentFrom returns the caller's identity: the authenticated agent name,

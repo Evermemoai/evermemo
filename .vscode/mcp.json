@@ -1,0 +1,18 @@
+{
+	"servers": {
+		"heroui-react": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@heroui/react-mcp@latest"
+			]
+		},
+		"my-mcp-server-64fe4949": {
+			"type": "stdio",
+			"command": "Enter",
+			"args": []
+		}
+	},
+	"inputs": []
+}
