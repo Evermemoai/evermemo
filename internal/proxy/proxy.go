@@ -63,8 +63,9 @@ func Handler(mem Searcher, cfg Config) (http.Handler, error) {
 			return
 		}
 		out.Header = r.Header.Clone()
+		stripHopByHop(out.Header)
 		out.Header.Del("Accept-Encoding") // avoid double compression handling
-		out.Header.Set("Content-Length", fmt.Sprint(len(body)))
+		out.Header.Del("Content-Length")  // transport sets it from the (possibly rewritten) body
 		out.Host = target.Host
 
 		resp, err := client.Do(out)
@@ -73,11 +74,13 @@ func Handler(mem Searcher, cfg Config) (http.Handler, error) {
 			return
 		}
 		defer resp.Body.Close()
+		header := w.Header()
 		for k, vv := range resp.Header {
 			for _, v := range vv {
-				w.Header().Add(k, v)
+				header.Add(k, v)
 			}
 		}
+		stripHopByHop(header)
 		w.WriteHeader(resp.StatusCode)
 		// io.Copy streams SSE responses through unbuffered.
 		if f, ok := w.(http.Flusher); ok {
@@ -100,6 +103,22 @@ func Handler(mem Searcher, cfg Config) (http.Handler, error) {
 
 func isChatPath(p string) bool {
 	return strings.HasSuffix(p, "/chat/completions") || strings.HasSuffix(p, "/v1/messages")
+}
+
+// stripHopByHop removes connection-scoped headers that must not be forwarded
+// (RFC 9110 §7.6.1).
+func stripHopByHop(h http.Header) {
+	for _, f := range strings.Split(h.Get("Connection"), ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			h.Del(f)
+		}
+	}
+	for _, k := range []string{
+		"Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization",
+		"Proxy-Connection", "Te", "Trailer", "Transfer-Encoding", "Upgrade",
+	} {
+		h.Del(k)
+	}
 }
 
 // inject searches memories for the last user message and adds them as system

@@ -278,7 +278,9 @@ func Handler(st *store.Store, cfg Config) http.Handler {
 		q := r.URL.Query()
 		ns := q.Get("namespace")
 		limit, _ := strconv.Atoi(q.Get("limit"))
-
+		if limit > 500 {
+			limit = 500 // keep responses bounded
+		}
 		checkNS := ns
 		if checkNS == "" {
 			checkNS = "*" // reading across namespaces needs a wildcard grant
@@ -605,6 +607,15 @@ func withRateLimit(perMin int, next http.Handler) http.Handler {
 			}
 		}
 		mu.Lock()
+		// Bound the map: evict buckets idle long enough to be full again.
+		if len(buckets) > 10000 {
+			cutoff := time.Now().Add(-2 * time.Minute)
+			for k, b := range buckets {
+				if b.last.Before(cutoff) {
+					delete(buckets, k)
+				}
+			}
+		}
 		b, ok := buckets[id]
 		if !ok {
 			b = &bucket{tokens: float64(perMin), last: time.Now()}

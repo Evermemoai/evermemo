@@ -303,7 +303,10 @@ func (s *Store) Link(from, rel, to string) error {
 	for _, id := range []string{from, to} {
 		var one int
 		if err := s.db.QueryRow(`SELECT 1 FROM memories WHERE id = ?`, id).Scan(&one); err != nil {
-			return fmt.Errorf("memory %q not found", id)
+			if err == sql.ErrNoRows {
+				return fmt.Errorf("memory %q not found", id)
+			}
+			return err
 		}
 	}
 	_, err := s.db.Exec(
