@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -430,6 +431,79 @@ func Handler(st *store.Store, cfg Config) http.Handler {
 		writeJSON(w, http.StatusOK, resp)
 	})
 
+	// Account: profile + notification prefs stored on the hub, keyed by
+	// caller identity (kv-backed; single-table port to Postgres/RDS later).
+	mux.HandleFunc("GET /v1/account", func(w http.ResponseWriter, r *http.Request) {
+		v, err := st.KVGet("account:" + profileOwner(r))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if v == "" {
+			v = "{}"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(v))
+	})
+
+	mux.HandleFunc("PUT /v1/account", func(w http.ResponseWriter, r *http.Request) {
+		var p struct {
+			Name          string          `json:"name"`
+			Email         string          `json:"email"`
+			Title         string          `json:"title"`
+			Username      string          `json:"username"`
+			Notifications json.RawMessage `json:"notifications"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&p); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+		if p.Notifications == nil {
+			p.Notifications = json.RawMessage("{}")
+		}
+		b, _ := json.Marshal(p)
+		if err := st.KVSet("account:"+profileOwner(r), string(b)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(b)
+	})
+
+	// Security overview: how the hub authenticates (names only, never keys).
+	mux.HandleFunc("GET /v1/account/security", func(w http.ResponseWriter, r *http.Request) {
+		mode := "open"
+		agents := []string{}
+		if cfg.Auth != nil {
+			if keys := cfg.Auth.agentKeys(); len(keys) > 0 {
+				mode = "per-agent keys"
+				for name := range keys {
+					agents = append(agents, name)
+				}
+				sort.Strings(agents)
+			} else if cfg.Auth.SharedKey != "" {
+				mode = "shared key"
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"auth_mode":    mode,
+			"agents":       agents,
+			"acl_enabled":  cfg.ACL != nil,
+			"rate_limited": cfg.RatePerMin > 0,
+			"caller":       agentFrom(r),
+		})
+	})
+
+	// Billing: OSS is free; a paid hosted tier may exist in the future.
+	mux.HandleFunc("GET /v1/account/billing", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"plan":    "open-source",
+			"price":   "free forever",
+			"license": "MIT",
+			"limits":  map[string]any{"memories": "unlimited", "agents": "unlimited", "namespaces": "unlimited"},
+		})
+	})
+
 	// Export all memories as JSONL (requires cross-namespace read).
 	mux.HandleFunc("GET /v1/export", func(w http.ResponseWriter, r *http.Request) {
 		if !cfg.ACL.Allow(agentFrom(r), "*", false) {
@@ -521,6 +595,14 @@ func agentFrom(r *http.Request) string {
 		return name
 	}
 	return strings.TrimSpace(r.Header.Get("X-Agent"))
+}
+
+// profileOwner keys profiles by caller identity, with a shared default.
+func profileOwner(r *http.Request) string {
+	if a := agentFrom(r); a != "" {
+		return a
+	}
+	return "default"
 }
 
 // allowWriteOn checks write permission on the namespace of an existing

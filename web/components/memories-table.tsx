@@ -107,7 +107,7 @@ export function MemoriesTable() {
           ))}
         </div>
       ) : (
-        <Table className="[--surface:#232323] [--surface-secondary:#2b2b2b] [--surface-tertiary:#2f2f2f]">
+        <Table>
           <Table.ScrollContainer>
             <Table.Content aria-label="Memories" className="min-w-[760px]">
               <Table.Header>

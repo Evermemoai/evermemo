@@ -26,6 +26,29 @@ export type ConsolidateReport = {
 
 export type Settings = { hubUrl: string; apiKey: string; agent: string };
 
+export type Account = {
+  name?: string;
+  email?: string;
+  title?: string;
+  username?: string;
+  notifications?: Record<string, boolean>;
+};
+
+export type SecurityInfo = {
+  auth_mode: string;
+  agents: string[];
+  acl_enabled: boolean;
+  rate_limited: boolean;
+  caller: string;
+};
+
+export type BillingInfo = {
+  plan: string;
+  price: string;
+  license: string;
+  limits: Record<string, string>;
+};
+
 const SETTINGS_KEY = "evermemo.settings";
 
 // Default hub: same origin when served from the binary at /ui, else env/localhost.
@@ -121,6 +144,19 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ namespace, dry_run: dryRun }),
     }),
+
+  account: () => req<Account>("/v1/account"),
+
+  saveAccount: (a: Account) =>
+    req<Account>("/v1/account", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(a),
+    }),
+
+  security: () => req<SecurityInfo>("/v1/account/security"),
+
+  billing: () => req<BillingInfo>("/v1/account/billing"),
 
   exportJSONL: async (): Promise<Blob> => {
     const { hubUrl } = getSettings();

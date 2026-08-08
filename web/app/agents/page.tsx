@@ -43,7 +43,7 @@ export default function AgentsPage() {
           ))}
         </div>
       ) : (
-        <Table className="[--surface:#232323] [--surface-secondary:#2b2b2b] [--surface-tertiary:#2f2f2f]">
+        <Table>
           <Table.ScrollContainer>
             <Table.Content aria-label="Agents">
               <Table.Header>

@@ -149,6 +149,12 @@ END;
 CREATE TRIGGER IF NOT EXISTS embeddings_ad AFTER DELETE ON memories BEGIN
 	DELETE FROM embeddings WHERE id = old.id;
 END;
+
+CREATE TABLE IF NOT EXISTS kv (
+	key        TEXT PRIMARY KEY,
+	value      TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
 `
 
 // Open opens (or creates) the database at path and runs migrations.
@@ -467,6 +473,24 @@ func (s *Store) keywordSearch(query, namespace string, limit int) ([]*Memory, er
 	}
 	defer rows.Close()
 	return collect(rows, true)
+}
+
+// KVGet returns the value stored under key, or "" when absent.
+func (s *Store) KVGet(key string) (string, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// KVSet stores value under key, replacing any previous value.
+func (s *Store) KVSet(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO kv (key, value, updated_at) VALUES (?, ?, ?)`,
+		key, value, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 // Count returns the total number of memories.

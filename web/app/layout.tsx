@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Providers } from "./providers";
-import { BottomNav } from "@/components/bottom-nav";
+import { AppShell } from "@/components/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -13,10 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className="dark" data-theme="dark">
       <body className="min-h-screen bg-background text-foreground antialiased">
         <Providers>
-          <main className="mx-auto min-h-screen w-full max-w-6xl px-6 pb-32 pt-8 lg:px-8">
-            {children}
-          </main>
-          <BottomNav />
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
